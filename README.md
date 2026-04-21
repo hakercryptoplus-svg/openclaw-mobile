@@ -64,10 +64,10 @@ The installer will:
 
 - Install Node.js, OpenSSH, Git inside Termux.
 - Prompt you for your SSH target (`user@host:port`), your SSH private key, and optional Telegram credentials.
-- Store the SSH key as a Termux secret, never written to any config file.
-- Clone & build OpenClaw.
+- Store the SSH key as a Termux env secret (mode `600`), never written into any config file.
+- Install OpenClaw from npm (`npm install -g openclaw`).
 - Write `~/.openclaw/openclaw.json` configured to forward all `bash`/`exec` to your SSH host via OpenClaw's built-in `sandbox.backend = "ssh"`.
-- Install the `openclaw-mobile` launcher.
+- Install the `openclaw-mobile` launcher into `$PREFIX/bin`.
 
 Daily use:
 
@@ -90,7 +90,7 @@ OpenClaw natively supports an SSH execution backend (`src/agents/sandbox/ssh.ts`
    - Sets `agents.defaults.sandbox.backend = "ssh"`.
    - Stores your SSH credentials as Termux environment secrets (`OPENCLAW_SSH_*`).
    - Writes a config that references those secrets via `${VAR}` template syntax, so the actual key never sits in `openclaw.json`.
-3. A `openclaw-mobile` wrapper that manages a long-running OpenClaw gateway via `nohup`/`pkill`, optimized for Termux background limits (works best with `termux-wake-lock`).
+3. A `openclaw-mobile` wrapper that manages a long-running OpenClaw gateway via `nohup` + a PID file (`start`/`stop`/`restart`/`logs`/`status`), optimized for Termux background limits (works best with `termux-wake-lock`).
 
 Every prompt OpenClaw runs — every shell command, every file read/write — is transparently forwarded to your SSH host. Your phone only handles the bot/gateway logic and stays cool.
 
