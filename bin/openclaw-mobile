@@ -1,0 +1,116 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# openclaw-mobile — lightweight launcher for the OpenClaw gateway on Termux.
+set -euo pipefail
+
+HOME_DIR="${HOME:-/data/data/com.termux/files/home}"
+MOBILE_DIR="$HOME_DIR/.openclaw-mobile"
+ENV_FILE="$MOBILE_DIR/env"
+PID_FILE="$MOBILE_DIR/gateway.pid"
+LOG_FILE="$MOBILE_DIR/gateway.log"
+REPO_DIR="$MOBILE_DIR/repo"
+CONFIG_FILE="$HOME_DIR/.openclaw/openclaw.json"
+
+CYAN=$'\033[36m'; GREEN=$'\033[32m'; RED=$'\033[31m'; YELLOW=$'\033[33m'; NC=$'\033[0m'
+say()  { printf '%s %s\n' "${CYAN}»${NC}" "$*"; }
+ok()   { printf '%s %s\n' "${GREEN}✓${NC}" "$*"; }
+warn() { printf '%s %s\n' "${YELLOW}!${NC}" "$*"; }
+die()  { printf '%s %s\n' "${RED}✗${NC}" "$*" >&2; exit 1; }
+
+[[ -f "$ENV_FILE" ]] || die "Missing $ENV_FILE — run install-termux.sh first."
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+
+is_running() {
+  [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+cmd_start() {
+  if is_running; then ok "already running (pid $(cat "$PID_FILE"))"; return; fi
+  [[ -f "$CONFIG_FILE" ]] || die "Missing $CONFIG_FILE — run install-termux.sh."
+  command -v openclaw >/dev/null || die "openclaw not in PATH. Reinstall: npm install -g openclaw"
+  say "Starting OpenClaw gateway…"
+  nohup openclaw gateway run >> "$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  sleep 1
+  if is_running; then ok "gateway started (pid $(cat "$PID_FILE"))"; else die "Failed to start. See $LOG_FILE"; fi
+}
+
+cmd_stop() {
+  if ! is_running; then warn "not running"; return; fi
+  PID="$(cat "$PID_FILE")"
+  kill "$PID" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do is_running || break; sleep 1; done
+  is_running && kill -9 "$PID" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  ok "stopped"
+}
+
+cmd_restart() { cmd_stop || true; cmd_start; }
+
+cmd_status() {
+  if is_running; then
+    ok "running (pid $(cat "$PID_FILE"))"
+    echo "  config: $CONFIG_FILE"
+    echo "  logs:   $LOG_FILE"
+  else
+    warn "not running"
+  fi
+}
+
+cmd_logs() {
+  [[ -f "$LOG_FILE" ]] || die "no log yet"
+  tail -F "$LOG_FILE"
+}
+
+cmd_config() {
+  "${EDITOR:-nano}" "$CONFIG_FILE"
+  warn "Restart with: openclaw-mobile restart"
+}
+
+cmd_update() {
+  say "Updating openclaw-mobile repo…"
+  git -C "$REPO_DIR" pull --ff-only
+  say "Updating OpenClaw npm package…"
+  npm install -g openclaw --no-audit --no-fund --silent
+  ok "updated. restart: openclaw-mobile restart"
+}
+
+cmd_test_ssh() {
+  TMP_KEY="$(mktemp)"; chmod 600 "$TMP_KEY"; printf '%s\n' "$OPENCLAW_SSH_PRIVATE_KEY" > "$TMP_KEY"
+  TMP_KH="$(mktemp)"; printf '%s\n' "${OPENCLAW_SSH_KNOWN_HOSTS:-}" > "$TMP_KH"
+  USER_HOST="${OPENCLAW_SSH_TARGET%:*}"
+  PORT="${OPENCLAW_SSH_TARGET##*:}"; [[ "$PORT" == "$OPENCLAW_SSH_TARGET" ]] && PORT="22"
+  say "ssh -p $PORT $USER_HOST 'uname -a && pwd'"
+  ssh -i "$TMP_KEY" -o "UserKnownHostsFile=$TMP_KH" -o StrictHostKeyChecking=yes -p "$PORT" "$USER_HOST" 'uname -a && pwd' || warn "ssh failed"
+  shred -u "$TMP_KEY" "$TMP_KH" 2>/dev/null || rm -f "$TMP_KEY" "$TMP_KH"
+}
+
+cmd_help() {
+  cat <<EOF
+openclaw-mobile — phone-side OpenClaw launcher
+
+Commands:
+  start      start the gateway in background
+  stop       stop the gateway
+  restart    restart the gateway
+  status     show running state
+  logs       tail gateway log
+  config     edit ~/.openclaw/openclaw.json
+  update     pull latest openclaw-mobile + OpenClaw npm package
+  test-ssh   verify SSH connection to compute host
+  help       show this help
+EOF
+}
+
+case "${1:-help}" in
+  start)    cmd_start ;;
+  stop)     cmd_stop ;;
+  restart)  cmd_restart ;;
+  status)   cmd_status ;;
+  logs)     cmd_logs ;;
+  config)   cmd_config ;;
+  update)   cmd_update ;;
+  test-ssh|test) cmd_test_ssh ;;
+  help|-h|--help) cmd_help ;;
+  *) cmd_help; exit 1 ;;
+esac
